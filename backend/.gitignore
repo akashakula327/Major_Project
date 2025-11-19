@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Environment variables
+.env
+.env.*
+!.env.example   # Keep example env file
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
+
+# Build output (if any)
+dist/
+build/
+
+# Temporary files
+tmp/
