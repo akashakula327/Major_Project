@@ -215,67 +215,68 @@ exports.getOfficersWithAssignments = (req, res) => {
 exports.deleteCitizen = (req, res) => {
     const { id } = req.params;
 
-    // First, verify the user is a citizen
-    db.query(
-        `SELECT u.id 
-         FROM users u
-         INNER JOIN user_roles ur ON u.id = ur.user_id
-         INNER JOIN roles r ON ur.role_id = r.id
-         WHERE u.id = ? AND r.name = ?`,
-        [id, ROLES.CITIZEN],
-        (err, result) => {
-            if (err) {
-                console.error('Error checking citizen:', err);
-                return res.status(500).json({ message: 'Database error' });
-            }
+    db.beginTransaction((err) => {
+        if (err) {
+            console.error('Transaction begin failed:', err);
+            return res.status(500).json({ message: 'Database transaction failed' });
+        }
 
-            if (result.length === 0) {
-                return res.status(404).json({ message: 'Citizen not found' });
-            }
+        db.query(
+            `SELECT u.id 
+             FROM users u
+             INNER JOIN user_roles ur ON u.id = ur.user_id
+             INNER JOIN roles r ON ur.role_id = r.id
+             WHERE u.id = ? AND r.name = ?`,
+            [id, ROLES.CITIZEN],
+            (err, result) => {
+                if (err) {
+                    console.error('Error checking citizen:', err);
+                    return db.rollback(() => res.status(500).json({ message: 'Database error' }));
+                }
 
-            // Step 1: Delete all complaints submitted by this citizen
-            db.query(
-                'DELETE FROM complaints WHERE user_id = ?',
-                [id],
-                (err) => {
+                if (result.length === 0) {
+                    return db.rollback(() => res.status(404).json({ message: 'Citizen not found' }));
+                }
+
+                const deleteComplaints = 'DELETE FROM complaints WHERE user_id = ?';
+                db.query(deleteComplaints, [id], (err) => {
                     if (err) {
                         console.error('Error deleting complaints:', err);
-                        return res.status(500).json({ message: 'Failed to delete citizen complaints' });
+                        return db.rollback(() => res.status(500).json({ message: 'Failed to delete citizen complaints' }));
                     }
 
-                    // Step 2: Delete from user_roles table
-                    db.query(
-                        'DELETE FROM user_roles WHERE user_id = ?',
-                        [id],
-                        (err) => {
+                    const deleteRoles = 'DELETE FROM user_roles WHERE user_id = ?';
+                    db.query(deleteRoles, [id], (err) => {
+                        if (err) {
+                            console.error('Error deleting user roles:', err);
+                            return db.rollback(() => res.status(500).json({ message: 'Failed to delete citizen roles' }));
+                        }
+
+                        const deleteUser = 'DELETE FROM users WHERE id = ?';
+                        db.query(deleteUser, [id], (err, deleteResult) => {
                             if (err) {
-                                console.error('Error deleting user role:', err);
-                                return res.status(500).json({ message: 'Failed to delete citizen role' });
+                                console.error('Error deleting user:', err);
+                                return db.rollback(() => res.status(500).json({ message: 'Failed to delete citizen' }));
                             }
 
-                            // Step 3: Delete from users table
-                            db.query(
-                                'DELETE FROM users WHERE id = ?',
-                                [id],
-                                (err, deleteResult) => {
-                                    if (err) {
-                                        console.error('Error deleting user:', err);
-                                        return res.status(500).json({ message: 'Failed to delete citizen' });
-                                    }
+                            if (deleteResult.affectedRows === 0) {
+                                return db.rollback(() => res.status(404).json({ message: 'Citizen not found' }));
+                            }
 
-                                    if (deleteResult.affectedRows === 0) {
-                                        return res.status(404).json({ message: 'Citizen not found' });
-                                    }
-
-                                    res.json({ message: 'Citizen deleted successfully' });
+                            db.commit((err) => {
+                                if (err) {
+                                    console.error('Transaction commit failed:', err);
+                                    return db.rollback(() => res.status(500).json({ message: 'Failed to commit delete operation' }));
                                 }
-                            );
-                        }
-                    );
-                }
-            );
-        }
-    );
+
+                                res.json({ message: 'Citizen deleted successfully' });
+                            });
+                        });
+                    });
+                });
+            }
+        );
+    });
 };
 
 // ✅ Delete an officer
