@@ -25,7 +25,7 @@ async function callGeminiWithRetry(text) {
         {
           contents: [{ parts: [{ text: `Complaint: "${text}"` }] }],
           system_instruction: {
-            parts: [{ text: 'Classify municipal complaints. Return ONLY JSON: {"category": string, "priority": "Low"|"Medium"|"High", "summary": string}' }]
+            parts: [{ text: 'Classify municipal complaints. The category MUST be exactly one of: "Sanitation", "Water", "Roads", "Electricity", "Drainage", "Animal Control", "Public Safety", "Other". Do NOT use any other category. Return ONLY JSON: {"category": string, "priority": "Low"|"Medium"|"High", "summary": string}' }]
           },
           generationConfig: {
             response_mime_type: 'application/json'
@@ -55,14 +55,13 @@ function fallbackCategorize(complaintText) {
   const text = complaintText.toLowerCase();
 
   const categoryMap = [
-    { keywords: ['water', 'pipe', 'leak', 'tap', 'drainage', 'sewage', 'flood', 'supply', 'bore', 'well'], category: 'Water', priority: 'High' },
-    { keywords: ['road', 'pothole', 'crack', 'pavement', 'footpath', 'bridge', 'highway', 'street'], category: 'Roads', priority: 'High' },
-    { keywords: ['electricity', 'power', 'light', 'lamp', 'pole', 'wire', 'transformer', 'outage', 'current'], category: 'Electricity', priority: 'High' },
-    { keywords: ['garbage', 'waste', 'trash', 'dustbin', 'dump', 'clean', 'sanitation', 'sweeping', 'litter'], category: 'Sanitation', priority: 'Medium' },
-    { keywords: ['noise', 'pollution', 'air', 'smoke', 'dust', 'environment', 'tree', 'green'], category: 'Environment', priority: 'Medium' },
-    { keywords: ['building', 'construction', 'encroachment', 'illegal', 'permit', 'violation'], category: 'Building', priority: 'Medium' },
-    { keywords: ['park', 'garden', 'playground', 'recreation', 'public space'], category: 'Parks', priority: 'Low' },
-    { keywords: ['traffic', 'signal', 'parking', 'vehicle', 'congestion', 'accident'], category: 'Traffic', priority: 'High' },
+    { keywords: ['garbage', 'waste', 'trash', 'dustbin', 'dump', 'clean', 'sanitation', 'sweeping', 'litter', 'hygiene', 'toilet', 'restroom'], category: 'Sanitation', priority: 'Medium' },
+    { keywords: ['water', 'pipe', 'leak', 'tap', 'supply', 'bore', 'well', 'tanker', 'drinking'], category: 'Water', priority: 'High' },
+    { keywords: ['road', 'pothole', 'crack', 'pavement', 'footpath', 'bridge', 'highway', 'street', 'traffic', 'signal', 'parking'], category: 'Roads', priority: 'High' },
+    { keywords: ['electricity', 'power', 'light', 'lamp', 'pole', 'wire', 'transformer', 'outage', 'current', 'voltage'], category: 'Electricity', priority: 'High' },
+    { keywords: ['drain', 'drainage', 'sewage', 'sewer', 'flood', 'clog', 'blocked', 'overflow', 'gutter', 'manhole'], category: 'Drainage', priority: 'High' },
+    { keywords: ['dog', 'cat', 'animal', 'stray', 'snake', 'monkey', 'cattle', 'cow', 'pig', 'rat', 'mosquito', 'insect', 'pest'], category: 'Animal Control', priority: 'Medium' },
+    { keywords: ['safety', 'crime', 'theft', 'robbery', 'fight', 'assault', 'police', 'danger', 'hazard', 'fire', 'accident', 'emergency'], category: 'Public Safety', priority: 'High' },
   ];
 
   for (const entry of categoryMap) {
@@ -76,7 +75,7 @@ function fallbackCategorize(complaintText) {
   }
 
   return {
-    category: 'General',
+    category: 'Other',
     priority: 'Medium',
     summary: complaintText.length > 100 ? complaintText.slice(0, 97) + '...' : complaintText,
   };
@@ -100,7 +99,7 @@ exports.submitComplaint = async (req, res) => {
     // 1. Save initial complaint to DB immediately
     const insertQuery = `
       INSERT INTO complaints (user_id, title, description, location, status, category, priority, summary, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'pending', 'General', 'Low', '', NOW(), NOW())
+      VALUES (?, ?, ?, ?, 'pending', 'Other', 'Low', '', NOW(), NOW())
     `;
 
     const result = await dbQuery(insertQuery, [userId, title, complaint, location]);
@@ -141,11 +140,11 @@ async function processAIAnalysis(complaintId, text) {
   // Update complaint with categorization (AI or fallback)
   await dbQuery(
     `UPDATE complaints SET category = ?, priority = ?, summary = ?, updated_at = NOW() WHERE id = ?`,
-    [aiData.category || 'General', aiData.priority || 'Low', aiData.summary || '', complaintId]
+    [aiData.category || 'Other', aiData.priority || 'Low', aiData.summary || '', complaintId]
   );
 
   // Auto-assign to officer with matching specialization and least complaints
-  if (aiData.category && aiData.category !== 'General') {
+  if (aiData.category) {
     const officerQuery = `
       SELECT u.id FROM users u
       INNER JOIN user_roles ur ON u.id = ur.user_id
