@@ -3,7 +3,6 @@ const db = require('../config/db');
 const axios = require('axios');
 require('dotenv').config();
 
-console.log("Gemini Key:", process.env.GEMINI_API_KEY);
 
 exports.submitComplaint = async (req, res) => {
   try {
