@@ -1,12 +1,90 @@
-// controllers/complaintController.js
 const db = require('../config/db');
 const axios = require('axios');
 require('dotenv').config();
 
+// ✅ Configuration
+const GEMINI_MODEL = 'gemini-2.0-flash-lite'; // Uses separate quota pool from gemini-2.0-flash
+const MAX_RETRIES = 3;
 
+// Helper: DB query as Promise
+const dbQuery = (sql, params) => {
+  return new Promise((resolve, reject) => {
+    db.query(sql, params, (err, results) => {
+      if (err) return reject(err);
+      resolve(results);
+    });
+  });
+};
+
+// ✅ Gemini API call with retry + exponential backoff
+async function callGeminiWithRetry(text) {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        {
+          contents: [{ parts: [{ text: `Complaint: "${text}"` }] }],
+          system_instruction: {
+            parts: [{ text: 'Classify municipal complaints. Return ONLY JSON: {"category": string, "priority": "Low"|"Medium"|"High", "summary": string}' }]
+          },
+          generationConfig: {
+            response_mime_type: 'application/json'
+          }
+        },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 15000,
+        }
+      );
+      return JSON.parse(response.data.candidates[0].content.parts[0].text);
+    } catch (err) {
+      const status = err.response?.status;
+      if (status === 429 && attempt < MAX_RETRIES) {
+        const waitMs = Math.pow(2, attempt) * 1000; // 2s, 4s
+        console.warn(`⏳ Rate limited (attempt ${attempt}/${MAX_RETRIES}). Retrying in ${waitMs}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
+// ✅ Fallback keyword-based categorizer (when Gemini API is unavailable)
+function fallbackCategorize(complaintText) {
+  const text = complaintText.toLowerCase();
+
+  const categoryMap = [
+    { keywords: ['water', 'pipe', 'leak', 'tap', 'drainage', 'sewage', 'flood', 'supply', 'bore', 'well'], category: 'Water', priority: 'High' },
+    { keywords: ['road', 'pothole', 'crack', 'pavement', 'footpath', 'bridge', 'highway', 'street'], category: 'Roads', priority: 'High' },
+    { keywords: ['electricity', 'power', 'light', 'lamp', 'pole', 'wire', 'transformer', 'outage', 'current'], category: 'Electricity', priority: 'High' },
+    { keywords: ['garbage', 'waste', 'trash', 'dustbin', 'dump', 'clean', 'sanitation', 'sweeping', 'litter'], category: 'Sanitation', priority: 'Medium' },
+    { keywords: ['noise', 'pollution', 'air', 'smoke', 'dust', 'environment', 'tree', 'green'], category: 'Environment', priority: 'Medium' },
+    { keywords: ['building', 'construction', 'encroachment', 'illegal', 'permit', 'violation'], category: 'Building', priority: 'Medium' },
+    { keywords: ['park', 'garden', 'playground', 'recreation', 'public space'], category: 'Parks', priority: 'Low' },
+    { keywords: ['traffic', 'signal', 'parking', 'vehicle', 'congestion', 'accident'], category: 'Traffic', priority: 'High' },
+  ];
+
+  for (const entry of categoryMap) {
+    if (entry.keywords.some((kw) => text.includes(kw))) {
+      return {
+        category: entry.category,
+        priority: entry.priority,
+        summary: complaintText.length > 100 ? complaintText.slice(0, 97) + '...' : complaintText,
+      };
+    }
+  }
+
+  return {
+    category: 'General',
+    priority: 'Medium',
+    summary: complaintText.length > 100 ? complaintText.slice(0, 97) + '...' : complaintText,
+  };
+}
+
+// ✅ Submit Complaint
 exports.submitComplaint = async (req, res) => {
   try {
-    // ✅ Extract userId from decoded JWT
     const userId = req.user?.userId;
     if (!userId) {
       return res.status(401).json({ message: 'Unauthorized: user not found in token' });
@@ -18,132 +96,84 @@ exports.submitComplaint = async (req, res) => {
     }
 
     const title = complaint.length > 60 ? `${complaint.slice(0, 57)}...` : complaint;
-    const description = complaint;
 
-    // ✅ Insert complaint into DB
+    // 1. Save initial complaint to DB immediately
     const insertQuery = `
       INSERT INTO complaints (user_id, title, description, location, status, category, priority, summary, created_at, updated_at)
       VALUES (?, ?, ?, ?, 'pending', 'General', 'Low', '', NOW(), NOW())
     `;
-    db.query(insertQuery, [userId, title, description, location || null], async (err, result) => {
-      if (err) {
-        console.error('❌ Error inserting complaint:', err);
-        return res.status(500).json({ message: 'Error submitting complaint' });
-      }
 
-      const complaintId = result.insertId;
+    const result = await dbQuery(insertQuery, [userId, title, complaint, location]);
+    const complaintId = result.insertId;
 
-      // ✅ Optional Gemini AI Analysis
-      try {
-        const prompt = `
-          You are an assistant classifying municipal complaints.
-          Return ONLY JSON (no markdown). Example:
-          {"category":"Water","priority":"High","summary":"Pipe leakage near main road"}
-
-          Complaint: "${complaint}"
-        `;
-
-        const aiResponse = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-          {
-            contents: [
-              { 
-                parts: [{ text: prompt }] 
-              }
-            ],
-          },
-          {
-            headers: {
-              "Content-Type" : "application/json"
-            }
-          }
-        );
-
-        // ✅ Extract AI response safely
-        let aiText = aiResponse.data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-        aiText = aiText.replace(/```(json)?|```/g, '').trim();
-
-        // Keep only JSON braces
-        const firstCurly = aiText.indexOf('{');
-        const lastCurly = aiText.lastIndexOf('}');
-        if (firstCurly !== -1 && lastCurly !== -1) {
-          aiText = aiText.substring(firstCurly, lastCurly + 1);
-        }
-
-        let aiData = { category: 'General', priority: 'Medium', summary: '' };
-        try {
-          aiData = JSON.parse(aiText);
-        } catch (parseError) {
-          console.warn('⚠️ Failed to parse AI response:', aiText);
-        }
-
-        // ✅ Update complaint with AI categorization
-        const updateQuery = `
-          UPDATE complaints
-          SET category = ?, priority = ?, summary = ?, updated_at = NOW()
-          WHERE id = ?
-        `;
-        db.query(updateQuery, [aiData.category, aiData.priority, aiData.summary, complaintId], (err2) => {
-          if (err2) console.error('❌ Error saving AI data:', err2);
-        });
-
-        // ✅ Auto-assign to officer with matching specialization and least complaints
-        const category = aiData.category;
-        if (category && category !== 'General') {
-          const officerQuery = `
-            SELECT u.id, COALESCE(COUNT(c.id), 0) AS assignedComplaints
-            FROM users u
-            INNER JOIN user_roles ur ON u.id = ur.user_id
-            INNER JOIN roles r ON ur.role_id = r.id
-            LEFT JOIN complaints c ON c.assigned_officer_id = u.id
-            WHERE r.name = 'officer' AND u.specialization = ?
-            GROUP BY u.id
-            ORDER BY assignedComplaints ASC
-            LIMIT 1
-          `;
-          db.query(officerQuery, [category], (err3, officers) => {
-            if (err3) {
-              console.error('❌ Error finding officer:', err3);
-            } else if (officers.length > 0) {
-              const officerId = officers[0].id;
-              const assignQuery = 'UPDATE complaints SET assigned_officer_id = ? WHERE id = ?';
-              db.query(assignQuery, [officerId, complaintId], (err4) => {
-                if (err4) console.error('❌ Error assigning officer:', err4);
-                else console.log(`✅ Complaint ${complaintId} assigned to officer ${officerId}`);
-              });
-            }
-          });
-        }
-      } catch (aiError) {
-        console.error('⚠️ AI processing error:', aiError.response?.data || aiError.message);
-      }
-
-      // ✅ Success response
-      res.status(201).json({
-        message: 'Complaint submitted successfully',
-        complaintId,
-      });
+    // 2. Send success response immediately
+    res.status(201).json({
+      message: 'Complaint submitted and is being processed.',
+      complaintId,
     });
+
+    // 3. Background AI analysis (with retry + fallback)
+    processAIAnalysis(complaintId, complaint).catch(err =>
+      console.error(`[Background Task Error] ID ${complaintId}:`, err.message)
+    );
+
   } catch (error) {
     console.error('❌ Submit complaint error:', error);
-    res.status(500).json({ message: 'Internal server error' });
+    if (!res.headersSent) {
+      res.status(500).json({ message: 'Internal server error' });
+    }
   }
 };
+
+// ✅ Background AI analysis with retry + fallback
+async function processAIAnalysis(complaintId, text) {
+  let aiData;
+
+  try {
+    aiData = await callGeminiWithRetry(text);
+    console.log(`✅ AI categorized complaint ${complaintId}:`, aiData);
+  } catch (err) {
+    console.warn(`⚠️ Gemini API failed for complaint ${complaintId}:`, err.response?.data?.error?.message || err.message);
+    console.log(`🔄 Using fallback keyword categorizer for complaint ${complaintId}`);
+    aiData = fallbackCategorize(text);
+  }
+
+  // Update complaint with categorization (AI or fallback)
+  await dbQuery(
+    `UPDATE complaints SET category = ?, priority = ?, summary = ?, updated_at = NOW() WHERE id = ?`,
+    [aiData.category || 'General', aiData.priority || 'Low', aiData.summary || '', complaintId]
+  );
+
+  // Auto-assign to officer with matching specialization and least complaints
+  if (aiData.category && aiData.category !== 'General') {
+    const officerQuery = `
+      SELECT u.id FROM users u
+      INNER JOIN user_roles ur ON u.id = ur.user_id
+      INNER JOIN roles r ON ur.role_id = r.id
+      LEFT JOIN complaints c ON c.assigned_officer_id = u.id
+      WHERE r.name = 'officer' AND u.specialization = ?
+      GROUP BY u.id
+      ORDER BY COUNT(c.id) ASC
+      LIMIT 1
+    `;
+
+    const officers = await dbQuery(officerQuery, [aiData.category]);
+
+    if (officers.length > 0) {
+      await dbQuery('UPDATE complaints SET assigned_officer_id = ? WHERE id = ?', [officers[0].id, complaintId]);
+      console.log(`✅ Complaint ${complaintId} assigned to officer ${officers[0].id}`);
+    }
+  }
+}
 
 // ✅ Get Complaints for Logged-in Citizen
 exports.getMyComplaints = (req, res) => {
   const userId = req.user?.userId;
-  if (!userId) {
-    return res.status(401).json({ message: 'Unauthorized: user not found in token' });
-  }
+  if (!userId) return res.status(401).json({ message: 'Unauthorized' });
 
   const query = 'SELECT * FROM complaints WHERE user_id = ? ORDER BY created_at DESC';
   db.query(query, [userId], (err, results) => {
-    if (err) {
-      console.error('❌ Error fetching complaints:', err);
-      return res.status(500).json({ message: 'Error fetching complaints' });
-    }
+    if (err) return res.status(500).json({ message: 'Error fetching complaints' });
     res.json(results);
   });
 };
-
