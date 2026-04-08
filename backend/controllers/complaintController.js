@@ -12,10 +12,13 @@ exports.submitComplaint = async (req, res) => {
       return res.status(401).json({ message: 'Unauthorized: user not found in token' });
     }
 
-    const { title, description, location } = req.body;
-    if (!title || !description) {
-      return res.status(400).json({ message: 'Title and description are required' });
+    const { complaint, location } = req.body;
+    if (!complaint || !location) {
+      return res.status(400).json({ message: 'Complaint text and location are required' });
     }
+
+    const title = complaint.length > 60 ? `${complaint.slice(0, 57)}...` : complaint;
+    const description = complaint;
 
     // ✅ Insert complaint into DB
     const insertQuery = `
@@ -37,7 +40,7 @@ exports.submitComplaint = async (req, res) => {
           Return ONLY JSON (no markdown). Example:
           {"category":"Water","priority":"High","summary":"Pipe leakage near main road"}
 
-          Complaint: "${title}. ${description}"
+          Complaint: "${complaint}"
         `;
 
         const aiResponse = await axios.post(

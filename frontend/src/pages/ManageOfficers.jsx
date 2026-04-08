@@ -3,6 +3,7 @@ import { useComplaints } from '../contexts/ComplaintContext';
 import { useAuth } from '../contexts/AuthContext';
 import { API_ENDPOINTS } from '../config/api';
 import { ROLES } from '../constants/roles';
+import { SPECIALIZATIONS } from '../constants/specializations';
 import { DashboardLayout } from '../components/DashboardLayout';
 import {
   Box,
@@ -17,6 +18,10 @@ import {
   DialogContent,
   DialogActions,
   TextField,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
   DialogContentText,
   Snackbar,
 } from '@mui/material';
@@ -230,6 +235,12 @@ const ManageOfficers = () => {
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Description sx={{ fontSize: 16, color: 'text.secondary' }} />
                       <Typography variant="body2" color="text.secondary">
+                        Specialization: <strong>{officer.specialization || 'Not specified'}</strong>
+                      </Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Description sx={{ fontSize: 16, color: 'text.secondary' }} />
+                      <Typography variant="body2" color="text.secondary">
                         {officer.assignedComplaints ?? officer.assignedComplaintsCount ?? 0} assigned complaints
                       </Typography>
                     </Box>
@@ -292,15 +303,20 @@ const ManageOfficers = () => {
               required
               helperText="Password must be at least 6 characters long"
             />
-            <TextField
-              label="Specialization"
-              placeholder="e.g., Water, Electricity, Roads"
-              value={specialization}
-              onChange={(e) => setSpecialization(e.target.value)}
-              fullWidth
-              required
-              helperText="Specify the officer's area of expertise"
-            />
+            <FormControl fullWidth required>
+              <InputLabel>Specialization</InputLabel>
+              <Select
+                label="Specialization"
+                value={specialization}
+                onChange={(e) => setSpecialization(e.target.value)}
+              >
+                {SPECIALIZATIONS.map((spec) => (
+                  <MenuItem key={spec} value={spec}>
+                    {spec}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
           </Box>
         </DialogContent>
         <DialogActions>

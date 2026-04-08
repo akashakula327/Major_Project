@@ -10,6 +10,7 @@ router.get('/complaints', adminController.getAllComplaints);
 router.post('/assign', adminController.assignComplaint);
 router.get('/users', adminController.getAllUsers);
 router.get('/officers', adminController.getOfficersWithAssignments);
+router.get('/specializations', adminController.getSpecializations);
 router.post('/officers', adminController.createOfficer);
 router.delete('/officers/:id', adminController.deleteOfficer);
 router.get('/citizens', adminController.getCitizensWithComplaints);

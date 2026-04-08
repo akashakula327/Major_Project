@@ -2,6 +2,12 @@ const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const ROLES = require('../constants/roles');
 const STATUS = require('../constants/statuses');
+const SPECIALIZATIONS = require('../constants/specializations');
+
+// ✅ Get available specializations
+exports.getSpecializations = (req, res) => {
+    res.json(SPECIALIZATIONS.VALID_SPECIALIZATIONS);
+};
 
 // ✅ Get all complaints (admin access)
 exports.getAllComplaints = (req, res) => {
@@ -94,6 +100,13 @@ exports.createOfficer = async (req, res) => {
 
     if (password.length < 6) {
         return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+
+    // Validate specialization
+    if (!SPECIALIZATIONS.VALID_SPECIALIZATIONS.includes(specialization)) {
+        return res.status(400).json({ 
+            message: 'Invalid specialization. Valid options are: ' + SPECIALIZATIONS.VALID_SPECIALIZATIONS.join(', ')
+        });
     }
 
     try {

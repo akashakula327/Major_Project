@@ -255,10 +255,15 @@ export const ComplaintProvider = ({ children }) => {
   // ✅ Add complaint (works locally immediately, then syncs with API)
   const addComplaint = async (complaintData) => {
     const user = getUser();
+    const complaintText = complaintData.complaint || complaintData.description || complaintData.title || '';
     const normalizedCategory = complaintData.category || complaintData.type || 'General';
+
+    const title = complaintText.length > 60 ? `${complaintText.slice(0, 57)}...` : complaintText;
 
     const newComplaint = {
       ...complaintData,
+      title,
+      description: complaintText,
       id: Date.now().toString(),
       status: normalizeStatus(complaintData.status),
       user_id: user?.id,
@@ -286,7 +291,7 @@ export const ComplaintProvider = ({ children }) => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(complaintData),
+        body: JSON.stringify({ complaint: complaintText, location: complaintData.location }),
       });
 
       const data = await res.json();
