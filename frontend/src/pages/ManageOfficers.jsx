@@ -29,6 +29,7 @@ const ManageOfficers = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [specialization, setSpecialization] = useState('');
   const [deleteDialog, setDeleteDialog] = useState({ open: false, officerId: null });
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [serverOfficers, setServerOfficers] = useState([]);
@@ -84,7 +85,7 @@ const ManageOfficers = () => {
   }, [serverOfficers, officers]);
 
   const handleAddOfficer = async () => {
-    if (!name || !email || !password) {
+    if (!name || !email || !password || !specialization) {
       setSnackbar({ open: true, message: 'Please fill in all fields', severity: 'error' });
       return;
     }
@@ -107,7 +108,7 @@ const ManageOfficers = () => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email, password, specialization }),
       });
 
       const data = await res.json();
@@ -122,6 +123,7 @@ const ManageOfficers = () => {
       setName('');
       setEmail('');
       setPassword('');
+      setSpecialization('');
 
       // Refetch officers to update the list
         const fetchRes = await fetch(API_ENDPOINTS.ADMIN.OFFICERS, {
@@ -290,6 +292,15 @@ const ManageOfficers = () => {
               required
               helperText="Password must be at least 6 characters long"
             />
+            <TextField
+              label="Specialization"
+              placeholder="e.g., Water, Electricity, Roads"
+              value={specialization}
+              onChange={(e) => setSpecialization(e.target.value)}
+              fullWidth
+              required
+              helperText="Specify the officer's area of expertise"
+            />
           </Box>
         </DialogContent>
         <DialogActions>
@@ -298,6 +309,7 @@ const ManageOfficers = () => {
             setName('');
             setEmail('');
             setPassword('');
+            setSpecialization('');
           }}>Cancel</Button>
           <Button variant="contained" onClick={handleAddOfficer}>
             Add Officer

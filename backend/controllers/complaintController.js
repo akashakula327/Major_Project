@@ -3,6 +3,8 @@ const db = require('../config/db');
 const axios = require('axios');
 require('dotenv').config();
 
+console.log("Gemini Key:", process.env.GEMINI_API_KEY);
+
 exports.submitComplaint = async (req, res) => {
   try {
     // ✅ Extract userId from decoded JWT
@@ -42,7 +44,16 @@ exports.submitComplaint = async (req, res) => {
         const aiResponse = await axios.post(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
           {
-            contents: [{ parts: [{ text: prompt }] }],
+            contents: [
+              { 
+                parts: [{ text: prompt }] 
+              }
+            ],
+          },
+          {
+            headers: {
+              "Content-Type" : "application/json"
+            }
           }
         );
 
@@ -73,6 +84,34 @@ exports.submitComplaint = async (req, res) => {
         db.query(updateQuery, [aiData.category, aiData.priority, aiData.summary, complaintId], (err2) => {
           if (err2) console.error('❌ Error saving AI data:', err2);
         });
+
+        // ✅ Auto-assign to officer with matching specialization and least complaints
+        const category = aiData.category;
+        if (category && category !== 'General') {
+          const officerQuery = `
+            SELECT u.id, COALESCE(COUNT(c.id), 0) AS assignedComplaints
+            FROM users u
+            INNER JOIN user_roles ur ON u.id = ur.user_id
+            INNER JOIN roles r ON ur.role_id = r.id
+            LEFT JOIN complaints c ON c.assigned_officer_id = u.id
+            WHERE r.name = 'officer' AND u.specialization = ?
+            GROUP BY u.id
+            ORDER BY assignedComplaints ASC
+            LIMIT 1
+          `;
+          db.query(officerQuery, [category], (err3, officers) => {
+            if (err3) {
+              console.error('❌ Error finding officer:', err3);
+            } else if (officers.length > 0) {
+              const officerId = officers[0].id;
+              const assignQuery = 'UPDATE complaints SET assigned_officer_id = ? WHERE id = ?';
+              db.query(assignQuery, [officerId, complaintId], (err4) => {
+                if (err4) console.error('❌ Error assigning officer:', err4);
+                else console.log(`✅ Complaint ${complaintId} assigned to officer ${officerId}`);
+              });
+            }
+          });
+        }
       } catch (aiError) {
         console.error('⚠️ AI processing error:', aiError.response?.data || aiError.message);
       }

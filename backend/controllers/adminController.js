@@ -85,11 +85,11 @@ exports.getCitizensWithComplaints = (req, res) => {
 
 // ✅ Create a new officer
 exports.createOfficer = async (req, res) => {
-    const { name, email, password } = req.body;
+    const { name, email, password, specialization } = req.body;
 
     // Validate input
-    if (!name || !email || !password) {
-        return res.status(400).json({ message: 'Name, email, and password are required' });
+    if (!name || !email || !password || !specialization) {
+        return res.status(400).json({ message: 'Name, email, password, and specialization are required' });
     }
 
     if (password.length < 6) {
@@ -120,10 +120,10 @@ exports.createOfficer = async (req, res) => {
 
                 const newUserId = (maxResult[0].maxId || 0) + 1;
 
-                // Insert user
+                // Insert user with specialization
                 db.query(
-                    'INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)',
-                    [newUserId, name, email, hashedPassword],
+                    'INSERT INTO users (id, name, email, password, specialization) VALUES (?, ?, ?, ?, ?)',
+                    [newUserId, name, email, hashedPassword, specialization],
                     (err) => {
                         if (err) {
                             console.error('Error inserting user:', err);
@@ -158,6 +158,7 @@ exports.createOfficer = async (req, res) => {
                                                 id: newUserId,
                                                 name,
                                                 email,
+                                                specialization,
                                             }
                                         });
                                     }
@@ -181,13 +182,14 @@ exports.getOfficersWithAssignments = (req, res) => {
             u.id,
             u.name,
             u.email,
+            u.specialization,
             COALESCE(COUNT(c.id), 0) AS assignedComplaints
         FROM users u
         INNER JOIN user_roles ur ON u.id = ur.user_id
         INNER JOIN roles r ON ur.role_id = r.id
         LEFT JOIN complaints c ON c.assigned_officer_id = u.id
         WHERE r.name = ?
-        GROUP BY u.id, u.name, u.email
+        GROUP BY u.id, u.name, u.email, u.specialization
         ORDER BY u.name ASC
     `;
 
