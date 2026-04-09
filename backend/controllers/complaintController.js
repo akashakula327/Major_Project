@@ -3,8 +3,13 @@ const axios = require('axios');
 require('dotenv').config();
 
 // ✅ Configuration
-const GEMINI_MODEL = 'gemini-2.0-flash-lite'; // Uses separate quota pool from gemini-2.0-flash
+const GROQ_MODEL = 'llama-3.3-70b-versatile'; // Fast & intelligent open model via Groq
 const MAX_RETRIES = 3;
+
+// ✅ Simple in-memory queue to prevent concurrent API burst
+let activeAITasks = 0;
+const MAX_CONCURRENT_AI = 3;
+const aiQueue = [];
 
 // Helper: DB query as Promise
 const dbQuery = (sql, params) => {
@@ -16,70 +21,108 @@ const dbQuery = (sql, params) => {
   });
 };
 
-// ✅ Gemini API call with retry + exponential backoff
-async function callGeminiWithRetry(text) {
+// ✅ Queue runner — processes one task at a time up to MAX_CONCURRENT_AI
+function enqueueAITask(complaintId, text) {
+  return new Promise((resolve, reject) => {
+    aiQueue.push({ complaintId, text, resolve, reject });
+    runNextAITask();
+  });
+}
+
+function runNextAITask() {
+  if (activeAITasks >= MAX_CONCURRENT_AI || aiQueue.length === 0) return;
+
+  const { complaintId, text, resolve, reject } = aiQueue.shift();
+  activeAITasks++;
+
+  processAIAnalysis(complaintId, text)
+    .then(resolve)
+    .catch(reject)
+    .finally(() => {
+      activeAITasks--;
+      runNextAITask(); // process next in queue
+    });
+}
+
+// ✅ Groq API call with retry + exponential backoff
+async function callGroqWithRetry(text) {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
+      // ✅ Log API key presence (never log the actual key)
+      if (!process.env.GROQ_API_KEY) {
+        throw new Error('GROQ_API_KEY is not defined in environment variables');
+      }
+
       const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        'https://api.groq.com/openai/v1/chat/completions',
         {
-          contents: [{ parts: [{ text: `Complaint: "${text}"` }] }],
-          system_instruction: {
-            parts: [{ text: 'Classify municipal complaints. The category MUST be exactly one of: "Sanitation", "Water", "Roads", "Electricity", "Drainage", "Animal Control", "Public Safety", "Other". Do NOT use any other category. Return ONLY JSON: {"category": string, "priority": "Low"|"Medium"|"High", "summary": string}' }]
-          },
-          generationConfig: {
-            response_mime_type: 'application/json'
-          }
+          model: GROQ_MODEL,
+          messages: [
+            {
+              role: 'system',
+              content: 'Classify municipal complaints. The category MUST be exactly one of: "Sanitation", "Water", "Roads", "Electricity", "Drainage", "Animal Control", "Public Safety", "Other". Do NOT use any other category. Return ONLY valid JSON with no markdown, no backticks: {"category": string, "priority": "Low"|"Medium"|"High", "summary": string}'
+            },
+            {
+              role: 'user',
+              content: `Complaint: "${text}"`
+            }
+          ],
+          response_format: { type: 'json_object' },
+          temperature: 0.1, // ✅ Low temperature = more deterministic/consistent output
+          max_tokens: 200, // ✅ Limit output to save quota
         },
         {
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
           timeout: 15000,
         }
       );
-      return JSON.parse(response.data.candidates[0].content.parts[0].text);
+
+      const rawText = response.data?.choices?.[0]?.message?.content;
+
+      if (!rawText) {
+        throw new Error('Empty response from Groq API');
+      }
+
+      // ✅ Strip markdown fences if model wraps JSON in ```json ... ```
+      const cleaned = rawText.replace(/```json|```/gi, '').trim();
+      const parsed = JSON.parse(cleaned);
+
+      // ✅ Validate returned fields
+      const validCategories = ['Sanitation', 'Water', 'Roads', 'Electricity', 'Drainage', 'Animal Control', 'Public Safety', 'Other'];
+      const validPriorities = ['Low', 'Medium', 'High'];
+
+      if (!validCategories.includes(parsed.category)) parsed.category = 'Other';
+      if (!validPriorities.includes(parsed.priority)) parsed.priority = 'Medium';
+      if (!parsed.summary || typeof parsed.summary !== 'string') parsed.summary = text.slice(0, 100);
+
+      return parsed;
+
     } catch (err) {
       const status = err.response?.status;
-      if (status === 429 && attempt < MAX_RETRIES) {
+      const isRateLimit = status === 429;
+      const isServerError = status >= 500;
+
+      if ((isRateLimit || isServerError) && attempt < MAX_RETRIES) {
         const waitMs = Math.pow(2, attempt) * 1000; // 2s, 4s
-        console.warn(`⏳ Rate limited (attempt ${attempt}/${MAX_RETRIES}). Retrying in ${waitMs}ms...`);
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        console.warn(`⏳ Groq API issue (status ${status}, attempt ${attempt}/${MAX_RETRIES}). Retrying in ${waitMs}ms...`);
+        await new Promise((res) => setTimeout(res, waitMs));
       } else {
+        // ✅ Log full error details for debugging
+        console.error('❌ Groq API error:', {
+          status,
+          message: err.response?.data?.error?.message || err.message,
+          attempt,
+        });
         throw err;
       }
     }
   }
 }
 
-// ✅ Fallback keyword-based categorizer (when Gemini API is unavailable)
-function fallbackCategorize(complaintText) {
-  const text = complaintText.toLowerCase();
 
-  const categoryMap = [
-    { keywords: ['garbage', 'waste', 'trash', 'dustbin', 'dump', 'clean', 'sanitation', 'sweeping', 'litter', 'hygiene', 'toilet', 'restroom'], category: 'Sanitation', priority: 'Medium' },
-    { keywords: ['water', 'pipe', 'leak', 'tap', 'supply', 'bore', 'well', 'tanker', 'drinking'], category: 'Water', priority: 'High' },
-    { keywords: ['road', 'pothole', 'crack', 'pavement', 'footpath', 'bridge', 'highway', 'street', 'traffic', 'signal', 'parking'], category: 'Roads', priority: 'High' },
-    { keywords: ['electricity', 'power', 'light', 'lamp', 'pole', 'wire', 'transformer', 'outage', 'current', 'voltage'], category: 'Electricity', priority: 'High' },
-    { keywords: ['drain', 'drainage', 'sewage', 'sewer', 'flood', 'clog', 'blocked', 'overflow', 'gutter', 'manhole'], category: 'Drainage', priority: 'High' },
-    { keywords: ['dog', 'cat', 'animal', 'stray', 'snake', 'monkey', 'cattle', 'cow', 'pig', 'rat', 'mosquito', 'insect', 'pest'], category: 'Animal Control', priority: 'Medium' },
-    { keywords: ['safety', 'crime', 'theft', 'robbery', 'fight', 'assault', 'police', 'danger', 'hazard', 'fire', 'accident', 'emergency'], category: 'Public Safety', priority: 'High' },
-  ];
-
-  for (const entry of categoryMap) {
-    if (entry.keywords.some((kw) => text.includes(kw))) {
-      return {
-        category: entry.category,
-        priority: entry.priority,
-        summary: complaintText.length > 100 ? complaintText.slice(0, 97) + '...' : complaintText,
-      };
-    }
-  }
-
-  return {
-    category: 'Other',
-    priority: 'Medium',
-    summary: complaintText.length > 100 ? complaintText.slice(0, 97) + '...' : complaintText,
-  };
-}
 
 // ✅ Submit Complaint
 exports.submitComplaint = async (req, res) => {
@@ -111,8 +154,8 @@ exports.submitComplaint = async (req, res) => {
       complaintId,
     });
 
-    // 3. Background AI analysis (with retry + fallback)
-    processAIAnalysis(complaintId, complaint).catch(err =>
+    // 3. ✅ Enqueue background AI analysis (rate-limited, not fire-and-forget)
+    enqueueAITask(complaintId, complaint).catch((err) =>
       console.error(`[Background Task Error] ID ${complaintId}:`, err.message)
     );
 
@@ -124,32 +167,31 @@ exports.submitComplaint = async (req, res) => {
   }
 };
 
-// ✅ Background AI analysis with retry + fallback
+// ✅ Background AI analysis with retry
 async function processAIAnalysis(complaintId, text) {
   let aiData;
 
   try {
-    aiData = await callGeminiWithRetry(text);
+    aiData = await callGroqWithRetry(text);
     console.log(`✅ AI categorized complaint ${complaintId}:`, aiData);
   } catch (err) {
-    console.warn(`⚠️ Gemini API failed for complaint ${complaintId}:`, err.response?.data?.error?.message || err.message);
-    console.log(`🔄 Using fallback keyword categorizer for complaint ${complaintId}`);
-    aiData = fallbackCategorize(text);
+    console.error(`❌ Groq API failed for complaint ${complaintId}. Categorization aborted. Error:`, err.response?.data?.error?.message || err.message);
+    return;
   }
 
-  // Update complaint with categorization (AI or fallback)
+  // Update complaint with categorization (AI only)
   await dbQuery(
     `UPDATE complaints SET category = ?, priority = ?, summary = ?, updated_at = NOW() WHERE id = ?`,
-    [aiData.category || 'Other', aiData.priority || 'Low', aiData.summary || '', complaintId]
+    [aiData.category || 'Other', aiData.priority || 'Medium', aiData.summary || '', complaintId]
   );
 
-  // Auto-assign to officer with matching specialization and least complaints
+  // Auto-assign to officer with matching specialization and least active complaints
   if (aiData.category) {
     const officerQuery = `
       SELECT u.id FROM users u
       INNER JOIN user_roles ur ON u.id = ur.user_id
       INNER JOIN roles r ON ur.role_id = r.id
-      LEFT JOIN complaints c ON c.assigned_officer_id = u.id
+      LEFT JOIN complaints c ON c.assigned_officer_id = u.id AND c.status NOT IN ('resolved', 'closed')
       WHERE r.name = 'officer' AND u.specialization = ?
       GROUP BY u.id
       ORDER BY COUNT(c.id) ASC
@@ -161,6 +203,8 @@ async function processAIAnalysis(complaintId, text) {
     if (officers.length > 0) {
       await dbQuery('UPDATE complaints SET assigned_officer_id = ? WHERE id = ?', [officers[0].id, complaintId]);
       console.log(`✅ Complaint ${complaintId} assigned to officer ${officers[0].id}`);
+    } else {
+      console.warn(`⚠️ No officer found for category: ${aiData.category}`);
     }
   }
 }
