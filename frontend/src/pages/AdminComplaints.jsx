@@ -151,7 +151,7 @@ const AdminComplaints = () => {
                       Citizen
                     </Typography>
                     <Typography variant="body2" fontWeight={500}>
-                      {complaint.citizenName}
+                      {complaint.citizenName || complaint.citizen_name || 'Unknown'}
                     </Typography>
                   </Box>
                   <Box>
@@ -159,7 +159,7 @@ const AdminComplaints = () => {
                       Type
                     </Typography>
                     <Typography variant="body2" fontWeight={500} sx={{ textTransform: 'capitalize' }}>
-                      {complaint.type}
+                      {complaint.category || complaint.type || 'Uncategorized'}
                     </Typography>
                   </Box>
                   <Box>
@@ -167,7 +167,7 @@ const AdminComplaints = () => {
                       Officer
                     </Typography>
                     <Typography variant="body2" fontWeight={500}>
-                      {complaint.officerName || 'Unassigned'}
+                      {complaint.officerName || complaint.officer_name || 'Unassigned'}
                     </Typography>
                   </Box>
                   <Box>
@@ -209,7 +209,7 @@ const AdminComplaints = () => {
                   <TextField
                     select
                     label="Assign Officer"
-                    value={complaint.officerId || ''}
+                    value={complaint.officerId || complaint.assigned_officer_id || ''}
                     onChange={(e) => handleAssignOfficer(complaint.id, e.target.value)}
                     sx={{ minWidth: 200 }}
                     size="small"
@@ -221,9 +221,16 @@ const AdminComplaints = () => {
                       ),
                     }}
                   >
-                    {officers.map(officer => (
+                    {officers
+                      .filter(officer => {
+                        if (!complaint.category || !officer.specialization) return true;
+                        const cat = complaint.category.toLowerCase();
+                        const spec = officer.specialization.toLowerCase();
+                        return cat.includes(spec) || spec.includes(cat);
+                      })
+                      .map(officer => (
                       <MenuItem key={officer.id} value={officer.id}>
-                        {officer.name}
+                        {officer.name} ({officer.specialization || 'No Specialization'})
                       </MenuItem>
                     ))}
                   </TextField>

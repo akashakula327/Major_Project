@@ -108,15 +108,8 @@ export const ComplaintProvider = ({ children }) => {
   // ✅ Fetch user's complaints based on role
   const fetchComplaints = useCallback(async () => {
     const token = getToken();
-    if (!token) {
-      console.error("No token found. Please login again.");
-      setLoading(false);
-      return;
-    }
-
     const user = getUser();
-    if (!user) {
-      console.error("No user found. Please login again.");
+    if (!token || !user) {
       setLoading(false);
       return;
     }
@@ -129,8 +122,9 @@ export const ComplaintProvider = ({ children }) => {
       endpoint = API_ENDPOINTS.OFFICER.COMPLAINTS;
     } else if (user.role === ROLES.CITIZEN) {
       endpoint = API_ENDPOINTS.COMPLAINTS.MY;
-    } else {
-      console.error("Unknown user role:", user.role);
+    }
+
+    if (!endpoint) {
       setLoading(false);
       return;
     }
@@ -140,36 +134,10 @@ export const ComplaintProvider = ({ children }) => {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      // Check if response is ok
-      if (!res.ok) {
-        const errorText = await res.text();
-        let errorMessage = `Failed to fetch complaints (${res.status})`;
-        try {
-          const errorData = JSON.parse(errorText);
-          errorMessage = errorData.message || errorData.error || errorMessage;
-        } catch (e) {
-          errorMessage = res.statusText || errorMessage;
-        }
-        console.error("Error response:", errorMessage);
-        setComplaints([]);
-        setLoading(false);
-        return;
-      }
-
+      if (!res.ok) throw new Error("Failed to fetch complaints");
       const data = await res.json();
-
-      // 🔥 Correct backend format handling
-      let fetchedComplaints = [];
-      if (Array.isArray(data)) {
-        fetchedComplaints = data;
-      } else if (Array.isArray(data.complaints)) {
-        fetchedComplaints = data.complaints;
-      } else if (data.data && Array.isArray(data.data)) {
-        fetchedComplaints = data.data;
-      } else {
-        console.warn("Unexpected response format:", data);
-        fetchedComplaints = [];
-      }
+      
+      let fetchedComplaints = Array.isArray(data) ? data : data.complaints || data.data || [];
 
       const normalizedComplaints = fetchedComplaints.map(c => ({
         ...c,
@@ -178,36 +146,31 @@ export const ComplaintProvider = ({ children }) => {
       }));
 
       setComplaints(normalizedComplaints);
-      // Save to localStorage as backup
       localStorage.setItem('cms_complaints', JSON.stringify(fetchedComplaints));
-
     } catch (err) {
       console.error("Error fetching complaints:", err);
-      if (err.name === 'TypeError' && err.message.includes('fetch')) {
-        console.error("Cannot connect to server. Make sure backend is running.");
-        // Fallback to localStorage if API fails
-        const stored = localStorage.getItem('cms_complaints');
-        if (stored) {
-          try {
-            const storedComplaints = JSON.parse(stored);
-            if (Array.isArray(storedComplaints) && storedComplaints.length > 0) {
-              setComplaints(storedComplaints);
-              console.log("Loaded complaints from localStorage as fallback");
-            } else {
-              setComplaints([]);
-            }
-          } catch (e) {
-            console.error("Error parsing stored complaints:", e);
-            setComplaints([]);
-          }
-        } else {
-          setComplaints([]);
-        }
-      } else {
-        setComplaints([]);
-      }
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // ✅ Fetch officers from database
+  const fetchOfficers = useCallback(async () => {
+    const token = getToken();
+    const user = getUser();
+    if (!token || !user || user.role !== ROLES.ADMIN) return;
+
+    try {
+      const res = await fetch(API_ENDPOINTS.ADMIN.OFFICERS, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) throw new Error("Failed to fetch officers");
+      const data = await res.json();
+      setOfficers(Array.isArray(data) ? data : []);
+      localStorage.setItem('cms_officers', JSON.stringify(data));
+    } catch (err) {
+      console.error("Error fetching officers:", err);
     }
   }, []);
 
@@ -216,41 +179,35 @@ export const ComplaintProvider = ({ children }) => {
     const token = getToken();
     const user = getUser();
     
-    // Only fetch if we have both token and user
     if (token && user) {
       fetchComplaints();
+      if (user.role === ROLES.ADMIN) {
+        fetchOfficers();
+      }
     } else {
-      // If no token/user, clear complaints and set loading to false
       setComplaints([]);
       setLoading(false);
     }
-  }, [fetchComplaints]);
+  }, [fetchComplaints, fetchOfficers]);
 
-  // Listen for storage changes (when user logs in/out in other tabs)
+  // Listen for storage changes
   useEffect(() => {
     const handleStorageChange = (e) => {
       if (e.key === 'cms_token' || e.key === 'cms_user') {
         const token = getToken();
         const user = getUser();
-        
         if (token && user) {
-          // User logged in or token updated, refetch complaints
           fetchComplaints();
+          if (user.role === ROLES.ADMIN) fetchOfficers();
         } else {
-          // User logged out, clear complaints
           setComplaints([]);
           setLoading(false);
         }
       }
     };
-
-    // Listen for storage events (from other tabs/windows)
     window.addEventListener('storage', handleStorageChange);
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-    };
-  }, [fetchComplaints]);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [fetchComplaints, fetchOfficers]);
 
   // ✅ Add complaint (works locally immediately, then syncs with API)
   const addComplaint = async (complaintData) => {
@@ -421,7 +378,7 @@ export const ComplaintProvider = ({ children }) => {
   };
 
   const assignOfficer = async (complaintId, officerId) => {
-    const officer = officers.find(o => o.id === officerId);
+    const officer = officers.find(o => o.id === officerId || o.id?.toString() === officerId?.toString());
     if (!officer) {
       console.error("Officer not found");
       return;
@@ -520,6 +477,7 @@ export const ComplaintProvider = ({ children }) => {
         addOfficer,
         removeOfficer,
         fetchComplaints,
+        fetchOfficers,
       }}
     >
       {children}
