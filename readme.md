@@ -168,7 +168,7 @@ JWT_SECRET=your-super-secret-jwt-key-here
 JWT_EXPIRES=7d
 
 # AI Configuration (Optional)
-GEMINI_API_KEY=your-gemini-api-key-here
+GROK_API_KEY=your-grok-api-key-here
 ```
 
 ### Frontend Configuration
