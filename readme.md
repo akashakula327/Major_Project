@@ -57,7 +57,7 @@ A comprehensive web application for managing municipal complaints with role-base
 - **MySQL** - Database
 - **JWT** - Authentication
 - **bcrypt** - Password hashing
-- **Google Gemini AI** - Complaint categorization
+- **Grok AI** - Complaint categorization
 
 ### Frontend
 - **React** - UI library
@@ -167,7 +167,7 @@ PORT=3000
 JWT_SECRET=your-super-secret-jwt-key-here
 JWT_EXPIRES=7d
 
-# AI Configuration (Optional)
+# AI Configuration 
 GROK_API_KEY=your-grok-api-key-here
 ```
 
@@ -444,11 +444,19 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- Google Gemini AI for complaint categorization
+- Grok AI for complaint categorization
 - Material-UI for the beautiful UI components
 - Express.js community for the robust framework
 - All contributors and testers
 
 ---
 
-**Note**: This is a comprehensive municipal complaint management system designed to streamline citizen-government communication and improve service delivery.
+## Project Preview
+
+
+
+https://github.com/user-attachments/assets/9ee3b185-fd5d-4cb9-beae-5e5ba20d6307
+
+
+
+
