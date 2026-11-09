@@ -167,9 +167,14 @@ PORT=3000
 JWT_SECRET=your-super-secret-jwt-key-here
 JWT_EXPIRES=7d
 
-# AI Configuration 
+# AI Configuration
 GROK_API_KEY=your-grok-api-key-here
+
+# Frontend Configuration (Optional)
+VITE_API_BASE_URL=http://localhost:3000
 ```
+
+**Note:** The JWT_SECRET should be a strong, randomly generated string (at least 32 characters).
 
 ### Frontend Configuration
 

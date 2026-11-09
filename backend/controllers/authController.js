@@ -4,8 +4,42 @@ const jwt = require('jsonwebtoken');
 const ROLES = require('../constants/roles');
 require('dotenv').config();
 
+// Password validation helper
+const validatePassword = (password) => {
+  const errors = [];
+  if (!password) {
+    errors.push('Password is required');
+    return errors;
+  }
+  if (password.length < 8) {
+    errors.push('Password must be at least 8 characters');
+  }
+  if (!/[A-Z]/.test(password)) {
+    errors.push('Password must contain at least one uppercase letter');
+  }
+  if (!/[a-z]/.test(password)) {
+    errors.push('Password must contain at least one lowercase letter');
+  }
+  if (!/[0-9]/.test(password)) {
+    errors.push('Password must contain at least one number');
+  }
+  if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+    errors.push('Password must contain at least one special character (!@#$%^&*(),.?":{}|<>)');
+  }
+  return errors;
+};
+
 exports.registerUser = async (req, res) => {
   const { name, email, password } = req.body;
+
+  // Validate password
+  const passwordErrors = validatePassword(password);
+  if (passwordErrors.length > 0) {
+    return res.status(400).json({
+      message: 'Password validation failed',
+      errors: passwordErrors
+    });
+  }
 
   try {
     const hashed = await bcrypt.hash(password, 10);
@@ -33,10 +67,10 @@ exports.registerUser = async (req, res) => {
 
           const newUserId = (idResult[0].maxId || 0) + 1;
 
-          // STEP 3: Insert user with manual ID
+          // STEP 3: Insert user with manual ID (include specialization as 'Other' default)
           db.query(
-            'INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)',
-            [newUserId, name, email, hashed],
+            'INSERT INTO users (id, name, email, password, specialization) VALUES (?, ?, ?, ?, ?)',
+            [newUserId, name, email, hashed, 'Other'],
             (err) => {
               if (err) {
                 console.error(err);
@@ -108,9 +142,9 @@ exports.loginUser = (req, res) => {
 
     // Fetch user role
     db.query(
-      `SELECT r.name AS role 
-       FROM user_roles ur 
-       JOIN roles r ON ur.role_id = r.id 
+      `SELECT r.name AS role
+       FROM user_roles ur
+       JOIN roles r ON ur.role_id = r.id
        WHERE ur.user_id = ?`,
       [user.id],
       (err, roleRes) => {
@@ -137,7 +171,8 @@ exports.loginUser = (req, res) => {
             id: user.id,
             name: user.name,
             email: user.email,
-            role
+            role,
+            specialization: user.specialization || 'Other'
           }
         });
       }

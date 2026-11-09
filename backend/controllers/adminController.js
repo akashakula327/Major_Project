@@ -98,13 +98,33 @@ exports.createOfficer = async (req, res) => {
         return res.status(400).json({ message: 'Name, email, password, and specialization are required' });
     }
 
-    if (password.length < 6) {
-        return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    // Validate password
+    const passwordErrors = [];
+    if (password.length < 8) {
+        passwordErrors.push('Password must be at least 8 characters');
+    }
+    if (!/[A-Z]/.test(password)) {
+        passwordErrors.push('Password must contain at least one uppercase letter');
+    }
+    if (!/[a-z]/.test(password)) {
+        passwordErrors.push('Password must contain at least one lowercase letter');
+    }
+    if (!/[0-9]/.test(password)) {
+        passwordErrors.push('Password must contain at least one number');
+    }
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+        passwordErrors.push('Password must contain at least one special character');
+    }
+    if (passwordErrors.length > 0) {
+        return res.status(400).json({
+            message: 'Password validation failed',
+            errors: passwordErrors
+        });
     }
 
     // Validate specialization
     if (!SPECIALIZATIONS.VALID_SPECIALIZATIONS.includes(specialization)) {
-        return res.status(400).json({ 
+        return res.status(400).json({
             message: 'Invalid specialization. Valid options are: ' + SPECIALIZATIONS.VALID_SPECIALIZATIONS.join(', ')
         });
     }
@@ -396,7 +416,7 @@ exports.updateComplaintStatus = (req, res) => {
 
     if (!STATUS.VALID_STATUSES.includes(normalizedStatus)) {
         return res.status(400).json({
-            message: `Invalid status. Allowed: ${validStatuses.join(", ")}`,
+            message: `Invalid status. Allowed: ${STATUS.VALID_STATUSES.join(", ")}`,
             received: normalizedStatus
         });
     }

@@ -139,6 +139,11 @@ exports.submitComplaint = async (req, res) => {
 
     const title = complaint.length > 60 ? `${complaint.slice(0, 57)}...` : complaint;
 
+    // Validate location is provided
+    if (!location || location.trim() === '') {
+      return res.status(400).json({ message: 'Location is required' });
+    }
+
     // 1. Save initial complaint to DB immediately
     const insertQuery = `
       INSERT INTO complaints (user_id, title, description, location, status, category, priority, summary, created_at, updated_at)
@@ -186,13 +191,15 @@ async function processAIAnalysis(complaintId, text) {
   );
 
   // Auto-assign to officer with matching specialization and least active complaints
+  // Also consider officers with 'General' or 'Other' specialization as fallback
   if (aiData.category) {
     const officerQuery = `
       SELECT u.id FROM users u
       INNER JOIN user_roles ur ON u.id = ur.user_id
       INNER JOIN roles r ON ur.role_id = r.id
       LEFT JOIN complaints c ON c.assigned_officer_id = u.id AND c.status NOT IN ('resolved', 'closed')
-      WHERE r.name = 'officer' AND u.specialization = ?
+      WHERE r.name = 'officer'
+        AND (u.specialization = ? OR u.specialization IN ('General', 'Other'))
       GROUP BY u.id
       ORDER BY COUNT(c.id) ASC
       LIMIT 1
@@ -204,7 +211,24 @@ async function processAIAnalysis(complaintId, text) {
       await dbQuery('UPDATE complaints SET assigned_officer_id = ? WHERE id = ?', [officers[0].id, complaintId]);
       console.log(`✅ Complaint ${complaintId} assigned to officer ${officers[0].id}`);
     } else {
-      console.warn(`⚠️ No officer found for category: ${aiData.category}`);
+      // Fallback: try any officer with 'General' or 'Other' specialization
+      const fallbackQuery = `
+        SELECT u.id FROM users u
+        INNER JOIN user_roles ur ON u.id = ur.user_id
+        INNER JOIN roles r ON ur.role_id = r.id
+        LEFT JOIN complaints c ON c.assigned_officer_id = u.id AND c.status NOT IN ('resolved', 'closed')
+        WHERE r.name = 'officer' AND u.specialization IN ('General', 'Other')
+        GROUP BY u.id
+        ORDER BY COUNT(c.id) ASC
+        LIMIT 1
+      `;
+      const fallbackOfficers = await dbQuery(fallbackQuery);
+      if (fallbackOfficers.length > 0) {
+        await dbQuery('UPDATE complaints SET assigned_officer_id = ? WHERE id = ?', [fallbackOfficers[0].id, complaintId]);
+        console.log(`✅ Complaint ${complaintId} assigned to fallback officer ${fallbackOfficers[0].id}`);
+      } else {
+        console.warn(`⚠️ No officer found for category: ${aiData.category}`);
+      }
     }
   }
 }

@@ -25,6 +25,17 @@ app.use('/admin', adminRoutes);
 app.use('/officer', officerRoutes);
 app.use('/complaints', complaintRoutes); // citizen routes
 
+// 404 handler for unknown routes
+app.use((req, res) => {
+    res.status(404).json({ message: 'Route not found' });
+});
+
+// Central error handler
+app.use((err, req, res, next) => {
+    console.error('Server Error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+});
+
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
